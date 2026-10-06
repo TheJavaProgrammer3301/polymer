@@ -1,20 +1,19 @@
-import React from 'react';
-import { getPayload } from 'payload';
-import config from '@/payload.config';
-import Header from '@/components/Header';
-import Footer from '@/components/Footer';
-import SectionPage from '@/components/SectionPage';
-import OpinionSectionPage from '@/components/Opinion/OpinionSectionPage';
-import NewsSectionPage from '@/components/News/NewsSectionPage';
 import FeaturesSectionPage, { type FeaturesEvent, type SpotlightPhoto } from '@/components/Features/FeaturesSectionPage';
-import { Article as PayloadArticle, Media } from '@/payload-types';
+import Footer from '@/components/Footer';
 import { Article as ComponentArticle } from '@/components/FrontPage/types';
+import Header from '@/components/Header';
+import NewsSectionPage from '@/components/News/NewsSectionPage';
 import type { SpotlightAuthor } from '@/components/Opinion/AuthorSpotlightCarousel';
-import { formatArticle } from '@/utils/formatArticle';
 import { opinionGroups } from '@/components/Opinion/opinionGroups';
-import { notFound } from 'next/navigation';
-import type { Metadata } from 'next';
+import OpinionSectionPage from '@/components/Opinion/OpinionSectionPage';
+import SectionPage from '@/components/SectionPage';
 import { getSectionSeoDescription, getSeo } from '@/lib/getSeo';
+import { Media, Article as PayloadArticle } from '@/payload-types';
+import config from '@/payload.config';
+import { formatArticle } from '@/utils/formatArticle';
+import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import { BasePayload, getPayload } from 'payload';
 
 export const revalidate = 60;
 
@@ -23,501 +22,596 @@ export const revalidate = 60;
 const NEWS_LAYOUT_CAPACITY = 26;
 
 type Args = {
-  params: Promise<{
-    section: string;
-  }>;
+	params: Promise<{
+		section: string;
+	}>;
 };
 
-export async function generateMetadata({ params }: Args): Promise<Metadata> {
-  const { section } = await params;
-  const seo = await getSeo();
-  const title = section.charAt(0).toUpperCase() + section.slice(1);
-  const description = getSectionSeoDescription(seo, section);
+export async function generateMetadata({ params }: Args): Promise<Metadata>
+{
+	const { section } = await params;
+	const seo = await getSeo();
+	const title = section.charAt(0).toUpperCase() + section.slice(1);
+	const description = getSectionSeoDescription(seo, section);
 
-  return {
-    title,
-    description,
-    alternates: { canonical: `/${section}` },
-    openGraph: {
-      title: `${title} — ${seo.siteIdentity.siteName}`,
-      description,
-      type: 'website',
-      url: `/${section}`,
-    },
-  };
+	return {
+		title,
+		description,
+		alternates: { canonical: `/${section}` },
+		openGraph: {
+			title: `${title} — ${seo.siteIdentity.siteName}`,
+			description,
+			type: 'website',
+			url: `/${section}`,
+		},
+	};
 }
 
-export default async function SectionPageRoute({ params }: Args) {
-  const { section } = await params;
+async function OpinionContentWrapper({
+	context: {
+		payload,
+		sectionTitle,
+		allFormattedArticles,
+		articles
+	}
+}: {
+	context: SectionPageRouteContext
+})
+{
+	// Fetch opinion page layout — pinned articles per column + editors choice
+	let pinnedCol1: ComponentArticle[] = [];
+	let pinnedCol2: ComponentArticle[] = [];
+	let pinnedCol3: ComponentArticle[] = [];
+	let col1Images: boolean[] = [true, false, false, false, false];
+	let col2Images: boolean[] = [false, false, true, false];
+	let col3Images: boolean[] = [false, false, false, true];
+	let editorsChoiceArticles: ComponentArticle[] = [];
+	let editorsChoiceLabel = "Opinion\u2019s Choice";
+	let pinnedSpotlightAuthors: SpotlightAuthor[] = [];
 
-  const contentSections = ['news', 'sports', 'features', 'opinion'];
-  const placeholderSections = ['about', 'checkmate', 'contact', 'submit'];
-  const isContentSection = contentSections.includes(section);
-  const isPlaceholderSection = placeholderSections.includes(section);
+	type LayoutShape = {
+		column1?: (number | null)[];
+		column1Images?: boolean[];
+		column2?: (number | null)[];
+		column2Images?: boolean[];
+		column3?: (number | null)[];
+		column3Images?: boolean[];
+		editorsChoice?: (number | null)[];
+		editorsChoiceLabel?: string;
+		spotlight?: Array<{ userId: number; articleTitle?: string | null; articleUrl?: string | null }>;
+	};
 
-  if (!isContentSection && !isPlaceholderSection) {
-    notFound();
-  }
+	let layoutJson: LayoutShape | undefined;
+	try
+	{
+		const layoutResponse = await payload.find({
+			collection: 'opinion-page-layout',
+			limit: 1,
+			depth: 0,
+			select: { layout: true },
+		});
+		const doc = layoutResponse.docs[0] as Record<string, unknown> | undefined;
+		if (doc?.layout && typeof doc.layout === 'object')
+		{
+			layoutJson = doc.layout as LayoutShape;
+		}
+	} catch
+	{
+		// Table may not exist yet
+	}
 
-  const renderPlaceholder = (message: string) => (
-    <main className="min-h-screen bg-bg-main transition-colors duration-300 flex flex-col">
-      <Header />
-      <div className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-16 md:px-[30px]">
-        <h1
-          className="font-meta uppercase tracking-[0.04em] text-[#D6001C] dark:text-white transition-colors text-[44px] sm:text-[52px] lg:text-[60px]"
-          style={{ fontWeight: 400, lineHeight: 1 }}
-        >
-          {section}
-        </h1>
-        <div className="mt-8 border-y border-rule py-16 text-center">
-          <p className="font-copy text-[22px] leading-[1.3] text-text-main">{message}</p>
-        </div>
-      </div>
-      <Footer />
-    </main>
-  );
+	if (layoutJson)
+	{
+		if (layoutJson.editorsChoiceLabel) editorsChoiceLabel = layoutJson.editorsChoiceLabel;
+		if (layoutJson.column1Images) col1Images = layoutJson.column1Images;
+		if (layoutJson.column2Images) col2Images = layoutJson.column2Images;
+		if (layoutJson.column3Images) col3Images = layoutJson.column3Images;
 
-  if (isPlaceholderSection) {
-    return renderPlaceholder('This section does not have published articles yet.');
-  }
+		// Collect all pinned IDs to fetch in one batch
+		const allPinnedIds = new Set<number>();
+		for (const col of [layoutJson.column1, layoutJson.column2, layoutJson.column3, layoutJson.editorsChoice])
+		{
+			if (col) for (const id of col) { if (id) allPinnedIds.add(id); }
+		}
 
-  const payload = await getPayload({ config });
-  const isOpinion = section === 'opinion';
-  const isNews = section === 'news';
+		if (allPinnedIds.size > 0)
+		{
+			const pinnedResponse = await payload.find({
+				collection: 'articles',
+				where: {
+					and: [
+						{ id: { in: Array.from(allPinnedIds) } },
+						{ _status: { equals: 'published' } },
+					],
+				},
+				limit: allPinnedIds.size,
+				depth: 1,
+				select: {
+					title: true, slug: true, subdeck: true, featuredImage: true,
+					section: true, kicker: true, publishedDate: true, createdAt: true,
+					authors: true, opinionType: true, writeInAuthors: true, isFollytechnic: true,
+				},
+			});
+			const pinnedMap = new Map(
+				pinnedResponse.docs.map((a) => [a.id, formatArticle(a)])
+			);
 
-  const eightWeeksAgo = new Date();
-  eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);
+			const resolveColumn = (ids: (number | null)[] | undefined): ComponentArticle[] =>
+				(ids || []).map((id) => (id ? pinnedMap.get(id) ?? null : null)).filter((a): a is ComponentArticle => a !== null);
 
-  const articlesResponse = await payload.find({
-    collection: 'articles',
-    where: {
-      section: {
-        equals: section as PayloadArticle['section'],
-      },
-      _status: {
-        equals: 'published',
-      },
-    },
-    sort: '-publishedDate',
-    limit: isNews ? 200 : 30,
-    depth: isOpinion ? 2 : 1,
-    select: {
-      title: true,
-      slug: true,
-      subdeck: true,
-      featuredImage: true,
-      section: true,
-      kicker: true,
-      publishedDate: true,
-      createdAt: true,
-      updatedAt: true,
-      authors: true,
-      ...(isOpinion && { opinionType: true }),
-      writeInAuthors: true,
-      isFollytechnic: true,
-    },
-  });
+			pinnedCol1 = resolveColumn(layoutJson.column1);
+			pinnedCol2 = resolveColumn(layoutJson.column2);
+			pinnedCol3 = resolveColumn(layoutJson.column3);
+			editorsChoiceArticles = resolveColumn(layoutJson.editorsChoice);
+		}
 
-  const articles = articlesResponse.docs;
+		// Build pinned spotlight authors
+		if (layoutJson.spotlight && layoutJson.spotlight.length > 0)
+		{
+			try
+			{
+				const userIds = layoutJson.spotlight.map((e) => e.userId).filter(Boolean);
+				const userResponse = await payload.find({
+					collection: 'users',
+					where: { id: { in: userIds } },
+					limit: userIds.length,
+					depth: 1,
+					select: { firstName: true, lastName: true, headshot: true },
+				});
+				const userMap = new Map(userResponse.docs.map((u) => [u.id, u]));
+				pinnedSpotlightAuthors = layoutJson.spotlight
+					.map((entry) =>
+					{
+						const user = userMap.get(entry.userId);
+						if (!user) return null;
+						const headshot =
+							user.headshot && typeof user.headshot !== 'number'
+								? (user.headshot as Media).url || null
+								: null;
+						return {
+							id: user.id,
+							name: `${user.firstName} ${user.lastName}`,
+							headshot,
+							latestArticle: {
+								title: entry.articleTitle || '',
+								url: entry.articleUrl || '/opinion',
+							},
+						} satisfies SpotlightAuthor;
+					})
+					.filter((a): a is SpotlightAuthor => a !== null);
+			} catch
+			{
+				// silently skip if spotlight fetch fails
+			}
+		}
+	}
 
-  if (articles.length === 0 && !isNews) {
-    return renderPlaceholder('No articles found in this section yet.');
-  }
+	// Fetch grouped opinion articles for bottom sections
+	const groupedArticles: Record<string, ComponentArticle[]> = {};
+	const groupEntries = Object.entries(opinionGroups);
+	const groupResults = await Promise.all(
+		groupEntries.map(([, group]) =>
+			payload.find({
+				collection: 'articles',
+				where: {
+					and: [
+						{ section: { equals: 'opinion' } },
+						{ _status: { equals: 'published' } },
+						{ opinionType: { in: group.types as unknown as string[] } },
+					],
+				},
+				sort: '-publishedDate',
+				limit: 5,
+				depth: 1,
+				select: {
+					title: true,
+					slug: true,
+					subdeck: true,
+					featuredImage: true,
+					section: true,
+					kicker: true,
+					publishedDate: true,
+					createdAt: true,
+					authors: true,
+					opinionType: true,
+				},
+			})
+		)
+	);
 
-  const allFormattedArticles = articles.map((a) => formatArticle(a)).filter(Boolean) as ComponentArticle[];
+	groupEntries.forEach(([key], i) =>
+	{
+		groupedArticles[key] = groupResults[i].docs
+			.map((a) => formatArticle(a))
+			.filter((a): a is ComponentArticle => a !== null);
+	});
 
-  // News prefers the last eight weeks, but backfills with older stories rather
-  // than leaving the section page empty over breaks.
-  let formattedArticles = allFormattedArticles;
-  let hasOlderNewsArticles = false;
-  if (isNews) {
-    const recent = allFormattedArticles.filter((a) => {
-      const iso = a.publishedDate || a.isoDate;
-      return Boolean(iso) && new Date(iso as string) >= eightWeeksAgo;
-    });
-    formattedArticles =
-      recent.length >= NEWS_LAYOUT_CAPACITY
-        ? recent
-        : allFormattedArticles.slice(0, Math.max(NEWS_LAYOUT_CAPACITY, recent.length));
-    hasOlderNewsArticles = allFormattedArticles.length > formattedArticles.length;
-  }
+	return <OpinionSectionPage
+		title={sectionTitle}
+		articles={allFormattedArticles}
+		rawArticles={articles}
+		pinnedCol1={pinnedCol1}
+		pinnedCol2={pinnedCol2}
+		pinnedCol3={pinnedCol3}
+		col1Images={col1Images}
+		col2Images={col2Images}
+		col3Images={col3Images}
+		editorsChoiceArticles={editorsChoiceArticles}
+		editorsChoiceLabel={editorsChoiceLabel}
+		groupedArticles={groupedArticles}
+		pinnedSpotlightAuthors={pinnedSpotlightAuthors}
+	/>;
+}
 
-  const sectionTitle = section.charAt(0).toUpperCase() + section.slice(1);
+async function FeaturesSectionPageWrapper({
+	context: {
+		payload,
+		sectionTitle,
+		allFormattedArticles
+	}
+}: {
+	context: SectionPageRouteContext
+})
+{
+	// Fetch features page layout — 3-column with events + Row 2
+	let featuresPinnedOnCampus: ComponentArticle[] = [];
+	let featuresPinnedFeatured: ComponentArticle[] = [];
+	let featuresPinnedRight: ComponentArticle[] = [];
+	let featuresEvents: FeaturesEvent[] = [];
+	let featuresOnCampusImages: boolean[] = [false, false, false];
+	let featuresRightImages: boolean[] = [false, false, false];
+	// Row 2
+	let featuresPinnedTheArts: ComponentArticle[] = [];
+	let featuresTheArtsImages: boolean[] = [false, false, false];
+	let featuresPhotoSpotlight: SpotlightPhoto[] = [];
+	let featuresPinnedSpotlightSubs: ComponentArticle[] = [];
+	let featuresPinnedCollarCity: ComponentArticle[] = [];
+	let featuresCollarCityImages: boolean[] = [false, false, false];
+	let featuresPinnedWide: ComponentArticle[] = [];
 
-  const breadcrumbJsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      {
-        '@type': 'ListItem',
-        position: 1,
-        name: 'Home',
-        item: '/',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: sectionTitle,
-      },
-    ],
-  };
+	type FeaturesLayoutShape = {
+		onCampus?: (number | null)[];
+		onCampusImages?: boolean[];
+		featured?: (number | null)[];
+		rightArticles?: (number | null)[];
+		rightImages?: boolean[];
+		events?: FeaturesEvent[];
+		theArts?: (number | null)[];
+		theArtsImages?: boolean[];
+		photoSpotlight?: SpotlightPhoto[];
+		spotlightSubs?: (number | null)[];
+		collarCity?: (number | null)[];
+		collarCityImages?: boolean[];
+		wideArticle?: (number | null)[];
+	};
 
-  // Fetch opinion page layout — pinned articles per column + editors choice
-  let pinnedCol1: ComponentArticle[] = [];
-  let pinnedCol2: ComponentArticle[] = [];
-  let pinnedCol3: ComponentArticle[] = [];
-  let col1Images: boolean[] = [true, false, false, false, false];
-  let col2Images: boolean[] = [false, false, true, false];
-  let col3Images: boolean[] = [false, false, false, true];
-  let editorsChoiceArticles: ComponentArticle[] = [];
-  let editorsChoiceLabel = "Opinion\u2019s Choice";
-  let pinnedSpotlightAuthors: SpotlightAuthor[] = [];
+	try
+	{
+		const layoutResponse = await payload.find({
+			collection: 'features-page-layout',
+			limit: 1,
+			depth: 0,
+			select: { layout: true },
+		});
+		const doc = layoutResponse.docs[0] as Record<string, unknown> | undefined;
+		const layoutJson = doc?.layout as FeaturesLayoutShape | undefined;
 
-  if (isOpinion) {
-    type LayoutShape = {
-      column1?: (number | null)[];
-      column1Images?: boolean[];
-      column2?: (number | null)[];
-      column2Images?: boolean[];
-      column3?: (number | null)[];
-      column3Images?: boolean[];
-      editorsChoice?: (number | null)[];
-      editorsChoiceLabel?: string;
-      spotlight?: Array<{ userId: number; articleTitle?: string | null; articleUrl?: string | null }>;
-    };
+		if (layoutJson)
+		{
+			featuresEvents = layoutJson.events || [];
+			if (layoutJson.onCampusImages) featuresOnCampusImages = layoutJson.onCampusImages;
+			if (layoutJson.rightImages) featuresRightImages = layoutJson.rightImages;
+			if (layoutJson.theArtsImages) featuresTheArtsImages = layoutJson.theArtsImages;
+			featuresPhotoSpotlight = layoutJson.photoSpotlight || [];
+			if (layoutJson.collarCityImages) featuresCollarCityImages = layoutJson.collarCityImages;
 
-    let layoutJson: LayoutShape | undefined;
-    try {
-      const layoutResponse = await payload.find({
-        collection: 'opinion-page-layout',
-        limit: 1,
-        depth: 0,
-        select: { layout: true },
-      });
-      const doc = layoutResponse.docs[0] as Record<string, unknown> | undefined;
-      if (doc?.layout && typeof doc.layout === 'object') {
-        layoutJson = doc.layout as LayoutShape;
-      }
-    } catch {
-      // Table may not exist yet
-    }
+			// Collect all pinned IDs to fetch in one batch (Row 1 + Row 2)
+			const allPinnedIds = new Set<number>();
+			for (const col of [layoutJson.onCampus, layoutJson.featured, layoutJson.rightArticles, layoutJson.theArts, layoutJson.spotlightSubs, layoutJson.collarCity, layoutJson.wideArticle])
+			{
+				if (col) for (const id of col) { if (id) allPinnedIds.add(id); }
+			}
 
-    if (layoutJson) {
-      if (layoutJson.editorsChoiceLabel) editorsChoiceLabel = layoutJson.editorsChoiceLabel;
-      if (layoutJson.column1Images) col1Images = layoutJson.column1Images;
-      if (layoutJson.column2Images) col2Images = layoutJson.column2Images;
-      if (layoutJson.column3Images) col3Images = layoutJson.column3Images;
+			if (allPinnedIds.size > 0)
+			{
+				const pinnedResponse = await payload.find({
+					collection: 'articles',
+					where: {
+						and: [
+							{ id: { in: Array.from(allPinnedIds) } },
+							{ _status: { equals: 'published' } },
+						],
+					},
+					limit: allPinnedIds.size,
+					depth: 1,
+					select: {
+						title: true, slug: true, subdeck: true, featuredImage: true,
+						section: true, kicker: true, publishedDate: true, createdAt: true,
+						authors: true, writeInAuthors: true, isFollytechnic: true,
+					},
+				});
+				const pinnedMap = new Map(
+					pinnedResponse.docs.map((a) => [a.id, formatArticle(a)]),
+				);
 
-      // Collect all pinned IDs to fetch in one batch
-      const allPinnedIds = new Set<number>();
-      for (const col of [layoutJson.column1, layoutJson.column2, layoutJson.column3, layoutJson.editorsChoice]) {
-        if (col) for (const id of col) { if (id) allPinnedIds.add(id); }
-      }
+				const resolveColumn = (ids: (number | null)[] | undefined): ComponentArticle[] =>
+					(ids || []).map((id) => (id ? pinnedMap.get(id) ?? null : null)).filter((a): a is ComponentArticle => a !== null);
 
-      if (allPinnedIds.size > 0) {
-        const pinnedResponse = await payload.find({
-          collection: 'articles',
-          where: {
-            and: [
-              { id: { in: Array.from(allPinnedIds) } },
-              { _status: { equals: 'published' } },
-            ],
-          },
-          limit: allPinnedIds.size,
-          depth: 1,
-          select: {
-            title: true, slug: true, subdeck: true, featuredImage: true,
-            section: true, kicker: true, publishedDate: true, createdAt: true,
-            authors: true, opinionType: true, writeInAuthors: true, isFollytechnic: true,
-          },
-        });
-        const pinnedMap = new Map(
-          pinnedResponse.docs.map((a) => [a.id, formatArticle(a)])
-        );
+				featuresPinnedOnCampus = resolveColumn(layoutJson.onCampus);
+				featuresPinnedFeatured = resolveColumn(layoutJson.featured);
+				featuresPinnedRight = resolveColumn(layoutJson.rightArticles);
+				featuresPinnedTheArts = resolveColumn(layoutJson.theArts);
+				featuresPinnedSpotlightSubs = resolveColumn(layoutJson.spotlightSubs);
+				featuresPinnedCollarCity = resolveColumn(layoutJson.collarCity);
+				featuresPinnedWide = resolveColumn(layoutJson.wideArticle);
+			}
+		}
+	} catch
+	{
+		// Table may not exist yet
+	}
 
-        const resolveColumn = (ids: (number | null)[] | undefined): ComponentArticle[] =>
-          (ids || []).map((id) => (id ? pinnedMap.get(id) ?? null : null)).filter((a): a is ComponentArticle => a !== null);
+	return <FeaturesSectionPage
+		title={sectionTitle}
+		articles={allFormattedArticles}
+		pinnedOnCampus={featuresPinnedOnCampus}
+		pinnedFeatured={featuresPinnedFeatured}
+		pinnedRight={featuresPinnedRight}
+		events={featuresEvents}
+		onCampusImages={featuresOnCampusImages}
+		rightImages={featuresRightImages}
+		pinnedTheArts={featuresPinnedTheArts}
+		theArtsImages={featuresTheArtsImages}
+		photoSpotlight={featuresPhotoSpotlight}
+		pinnedSpotlightSubs={featuresPinnedSpotlightSubs}
+		pinnedCollarCity={featuresPinnedCollarCity}
+		collarCityImages={featuresCollarCityImages}
+		pinnedWide={featuresPinnedWide}
+	/>;
+}
 
-        pinnedCol1 = resolveColumn(layoutJson.column1);
-        pinnedCol2 = resolveColumn(layoutJson.column2);
-        pinnedCol3 = resolveColumn(layoutJson.column3);
-        editorsChoiceArticles = resolveColumn(layoutJson.editorsChoice);
-      }
+async function NewsSectionPageWrapper({
+	context: {
+		payload,
+		sectionTitle,
+		allFormattedArticles
+	}
+}: {
+	context: SectionPageRouteContext
+})
+{
+	const eightWeeksAgo = new Date();
 
-      // Build pinned spotlight authors
-      if (layoutJson.spotlight && layoutJson.spotlight.length > 0) {
-        try {
-          const userIds = layoutJson.spotlight.map((e) => e.userId).filter(Boolean);
-          const userResponse = await payload.find({
-            collection: 'users',
-            where: { id: { in: userIds } },
-            limit: userIds.length,
-            depth: 1,
-            select: { firstName: true, lastName: true, headshot: true },
-          });
-          const userMap = new Map(userResponse.docs.map((u) => [u.id, u]));
-          pinnedSpotlightAuthors = layoutJson.spotlight
-            .map((entry) => {
-              const user = userMap.get(entry.userId);
-              if (!user) return null;
-              const headshot =
-                user.headshot && typeof user.headshot !== 'number'
-                  ? (user.headshot as Media).url || null
-                  : null;
-              return {
-                id: user.id,
-                name: `${user.firstName} ${user.lastName}`,
-                headshot,
-                latestArticle: {
-                  title: entry.articleTitle || '',
-                  url: entry.articleUrl || '/opinion',
-                },
-              } satisfies SpotlightAuthor;
-            })
-            .filter((a): a is SpotlightAuthor => a !== null);
-        } catch {
-          // silently skip if spotlight fetch fails
-        }
-      }
-    }
-  }
+	eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);
 
-  // Fetch news pinned articles — they lead the section page's centre column
-  let newsPinnedArticles: ComponentArticle[] = [];
-  if (isNews) {
-    try {
-      const layoutResponse = await payload.find({
-        collection: 'layout',
-        limit: 1,
-        depth: 0,
-        select: { sectionLayouts: true },
-      });
-      const layoutDoc = layoutResponse.docs[0] as { sectionLayouts?: Record<string, { pinnedArticles?: number[] }> } | undefined;
-      const pinnedIds = (layoutDoc?.sectionLayouts?.news?.pinnedArticles || []).filter(Boolean);
+	// News prefers the last eight weeks, but backfills with older stories rather
+	// than leaving the section page empty over breaks.
+	// Fetch news pinned articles — they lead the section page's centre column
+	let newsPinnedArticles = new Array<ComponentArticle>();
 
-      if (pinnedIds.length > 0) {
-        const pinnedResponse = await payload.find({
-          collection: 'articles',
-          where: {
-            and: [
-              { id: { in: pinnedIds } },
-              { _status: { equals: 'published' } },
-            ],
-          },
-          limit: pinnedIds.length,
-          depth: 1,
-          select: {
-            title: true,
-            slug: true,
-            subdeck: true,
-            featuredImage: true,
-            section: true,
-            kicker: true,
-            publishedDate: true,
-            createdAt: true,
-            authors: true,
-            writeInAuthors: true,
-            isFollytechnic: true,
-          },
-        });
-        const pinnedMap = new Map(pinnedResponse.docs.map((a) => [a.id, formatArticle(a)]));
-        // Keep the editor's pin order
-        newsPinnedArticles = pinnedIds
-          .map((id) => pinnedMap.get(id) ?? null)
-          .filter((a): a is ComponentArticle => a !== null);
-      }
-    } catch {
-      // Layout may not exist yet
-    }
-  }
+	const recent = allFormattedArticles.filter((a) =>
+	{
+		const iso = a.publishedDate || a.isoDate;
 
-  // Fetch grouped opinion articles for bottom sections
-  const groupedArticles: Record<string, ComponentArticle[]> = {};
-  if (isOpinion) {
-    const groupEntries = Object.entries(opinionGroups);
-    const groupResults = await Promise.all(
-      groupEntries.map(([, group]) =>
-        payload.find({
-          collection: 'articles',
-          where: {
-            and: [
-              { section: { equals: 'opinion' } },
-              { _status: { equals: 'published' } },
-              { opinionType: { in: group.types as unknown as string[] } },
-            ],
-          },
-          sort: '-publishedDate',
-          limit: 5,
-          depth: 1,
-          select: {
-            title: true,
-            slug: true,
-            subdeck: true,
-            featuredImage: true,
-            section: true,
-            kicker: true,
-            publishedDate: true,
-            createdAt: true,
-            authors: true,
-            opinionType: true,
-          },
-        })
-      )
-    );
-    groupEntries.forEach(([key], i) => {
-      groupedArticles[key] = groupResults[i].docs
-        .map((a) => formatArticle(a))
-        .filter((a): a is ComponentArticle => a !== null);
-    });
-  }
+		return Boolean(iso) && new Date(iso as string) >= eightWeeksAgo;
+	});
 
-  // Fetch features page layout — 3-column with events + Row 2
-  let featuresPinnedOnCampus: ComponentArticle[] = [];
-  let featuresPinnedFeatured: ComponentArticle[] = [];
-  let featuresPinnedRight: ComponentArticle[] = [];
-  let featuresEvents: FeaturesEvent[] = [];
-  let featuresOnCampusImages: boolean[] = [false, false, false];
-  let featuresRightImages: boolean[] = [false, false, false];
-  // Row 2
-  let featuresPinnedTheArts: ComponentArticle[] = [];
-  let featuresTheArtsImages: boolean[] = [false, false, false];
-  let featuresPhotoSpotlight: SpotlightPhoto[] = [];
-  let featuresPinnedSpotlightSubs: ComponentArticle[] = [];
-  let featuresPinnedCollarCity: ComponentArticle[] = [];
-  let featuresCollarCityImages: boolean[] = [false, false, false];
-  let featuresPinnedWide: ComponentArticle[] = [];
+	const formattedArticles = recent.length >= NEWS_LAYOUT_CAPACITY
+		? recent
+		: allFormattedArticles.slice(0, Math.max(NEWS_LAYOUT_CAPACITY, recent.length));;
 
-  if (section === 'features') {
-    type FeaturesLayoutShape = {
-      onCampus?: (number | null)[];
-      onCampusImages?: boolean[];
-      featured?: (number | null)[];
-      rightArticles?: (number | null)[];
-      rightImages?: boolean[];
-      events?: FeaturesEvent[];
-      theArts?: (number | null)[];
-      theArtsImages?: boolean[];
-      photoSpotlight?: SpotlightPhoto[];
-      spotlightSubs?: (number | null)[];
-      collarCity?: (number | null)[];
-      collarCityImages?: boolean[];
-      wideArticle?: (number | null)[];
-    };
+	const hasOlderNewsArticles = allFormattedArticles.length > formattedArticles.length;
 
-    try {
-      const layoutResponse = await payload.find({
-        collection: 'features-page-layout',
-        limit: 1,
-        depth: 0,
-        select: { layout: true },
-      });
-      const doc = layoutResponse.docs[0] as Record<string, unknown> | undefined;
-      const layoutJson = doc?.layout as FeaturesLayoutShape | undefined;
+	try
+	{
+		const layoutResponse = await payload.find({
+			collection: 'layout',
+			limit: 1,
+			depth: 0,
+			select: { sectionLayouts: true },
+		});
+		const layoutDoc = layoutResponse.docs[0] as { sectionLayouts?: Record<string, { pinnedArticles?: number[] }> } | undefined;
+		const pinnedIds = (layoutDoc?.sectionLayouts?.news?.pinnedArticles || []).filter(Boolean);
 
-      if (layoutJson) {
-        featuresEvents = layoutJson.events || [];
-        if (layoutJson.onCampusImages) featuresOnCampusImages = layoutJson.onCampusImages;
-        if (layoutJson.rightImages) featuresRightImages = layoutJson.rightImages;
-        if (layoutJson.theArtsImages) featuresTheArtsImages = layoutJson.theArtsImages;
-        featuresPhotoSpotlight = layoutJson.photoSpotlight || [];
-        if (layoutJson.collarCityImages) featuresCollarCityImages = layoutJson.collarCityImages;
+		if (pinnedIds.length > 0)
+		{
+			const pinnedResponse = await payload.find({
+				collection: 'articles',
+				where: {
+					and: [
+						{ id: { in: pinnedIds } },
+						{ _status: { equals: 'published' } },
+					],
+				},
+				limit: pinnedIds.length,
+				depth: 1,
+				select: {
+					title: true,
+					slug: true,
+					subdeck: true,
+					featuredImage: true,
+					section: true,
+					kicker: true,
+					publishedDate: true,
+					createdAt: true,
+					authors: true,
+					writeInAuthors: true,
+					isFollytechnic: true,
+				},
+			});
 
-        // Collect all pinned IDs to fetch in one batch (Row 1 + Row 2)
-        const allPinnedIds = new Set<number>();
-        for (const col of [layoutJson.onCampus, layoutJson.featured, layoutJson.rightArticles, layoutJson.theArts, layoutJson.spotlightSubs, layoutJson.collarCity, layoutJson.wideArticle]) {
-          if (col) for (const id of col) { if (id) allPinnedIds.add(id); }
-        }
+			const set = new Set(pinnedIds);
 
-        if (allPinnedIds.size > 0) {
-          const pinnedResponse = await payload.find({
-            collection: 'articles',
-            where: {
-              and: [
-                { id: { in: Array.from(allPinnedIds) } },
-                { _status: { equals: 'published' } },
-              ],
-            },
-            limit: allPinnedIds.size,
-            depth: 1,
-            select: {
-              title: true, slug: true, subdeck: true, featuredImage: true,
-              section: true, kicker: true, publishedDate: true, createdAt: true,
-              authors: true, writeInAuthors: true, isFollytechnic: true,
-            },
-          });
-          const pinnedMap = new Map(
-            pinnedResponse.docs.map((a) => [a.id, formatArticle(a)]),
-          );
+			for (const doc of pinnedResponse.docs)
+			{
+				if (set.has(doc.id))
+				{
+					const article = formatArticle(doc);
 
-          const resolveColumn = (ids: (number | null)[] | undefined): ComponentArticle[] =>
-            (ids || []).map((id) => (id ? pinnedMap.get(id) ?? null : null)).filter((a): a is ComponentArticle => a !== null);
+					if (article)
+					{
+						newsPinnedArticles.push(article);
+					}
+				}
+			}
+		}
+	} catch
+	{
+		// Layout may not exist yet
+	}
 
-          featuresPinnedOnCampus = resolveColumn(layoutJson.onCampus);
-          featuresPinnedFeatured = resolveColumn(layoutJson.featured);
-          featuresPinnedRight = resolveColumn(layoutJson.rightArticles);
-          featuresPinnedTheArts = resolveColumn(layoutJson.theArts);
-          featuresPinnedSpotlightSubs = resolveColumn(layoutJson.spotlightSubs);
-          featuresPinnedCollarCity = resolveColumn(layoutJson.collarCity);
-          featuresPinnedWide = resolveColumn(layoutJson.wideArticle);
-        }
-      }
-    } catch {
-      // Table may not exist yet
-    }
-  }
+	return <NewsSectionPage
+		title={sectionTitle}
+		articles={formattedArticles}
+		pinnedArticles={newsPinnedArticles}
+		hasOlderArticles={hasOlderNewsArticles}
+	/>;
+}
 
-  return (
-    <main className={`min-h-screen bg-bg-main section-${section} transition-colors duration-300`}>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd).replace(/</g, '\\u003c') }}
-      />
-      <Header />
-      {isOpinion ? (
-        <OpinionSectionPage
-          title={sectionTitle}
-          articles={formattedArticles}
-          rawArticles={articles}
-          pinnedCol1={pinnedCol1}
-          pinnedCol2={pinnedCol2}
-          pinnedCol3={pinnedCol3}
-          col1Images={col1Images}
-          col2Images={col2Images}
-          col3Images={col3Images}
-          editorsChoiceArticles={editorsChoiceArticles}
-          editorsChoiceLabel={editorsChoiceLabel}
-          groupedArticles={groupedArticles}
-          pinnedSpotlightAuthors={pinnedSpotlightAuthors}
-        />
-      ) : section === 'features' ? (
-        <FeaturesSectionPage
-          title={sectionTitle}
-          articles={formattedArticles}
-          pinnedOnCampus={featuresPinnedOnCampus}
-          pinnedFeatured={featuresPinnedFeatured}
-          pinnedRight={featuresPinnedRight}
-          events={featuresEvents}
-          onCampusImages={featuresOnCampusImages}
-          rightImages={featuresRightImages}
-          pinnedTheArts={featuresPinnedTheArts}
-          theArtsImages={featuresTheArtsImages}
-          photoSpotlight={featuresPhotoSpotlight}
-          pinnedSpotlightSubs={featuresPinnedSpotlightSubs}
-          pinnedCollarCity={featuresPinnedCollarCity}
-          collarCityImages={featuresCollarCityImages}
-          pinnedWide={featuresPinnedWide}
-        />
-      ) : isNews ? (
-        <NewsSectionPage
-          title={sectionTitle}
-          articles={formattedArticles}
-          pinnedArticles={newsPinnedArticles}
-          hasOlderArticles={hasOlderNewsArticles}
-        />
-      ) : (
-        <SectionPage title={sectionTitle} articles={formattedArticles} />
-      )}
-      <Footer />
-    </main>
-  );
+/**
+ * next.js does not permit the usage of contexts in server components, so we simply pass this object down instead.
+ */
+interface SectionPageRouteContext
+{
+	readonly payload: BasePayload;
+	readonly sectionTitle: string;
+	/**
+	 * originally, all sections referred to formattedArticles, which was modified for the news section to filter by week or something. since formattedArticles = allFormattedArticles for all cases other than for the news section, we pass the allFormattedArticles instead of formattedArticles to the other sections and instead make the news page do the formatting itself.
+	 */
+	readonly allFormattedArticles: ComponentArticle[];
+	readonly articles: PayloadArticle[];
+}
+
+function SectionPageRouteContent({
+	section,
+	context
+}: {
+	section: string,
+	context: SectionPageRouteContext
+})
+{
+	switch (section)
+	{
+		case 'opinion':
+			return <OpinionContentWrapper context={context} />;
+		case 'features':
+			return <FeaturesSectionPageWrapper context={context} />;
+		case 'news':
+			return <NewsSectionPageWrapper context={context} />;
+		default:
+			return <SectionPage title={context.sectionTitle} articles={context.allFormattedArticles} />;
+	}
+}
+
+export default async function SectionPageRoute({ params }: Args)
+{
+	const { section } = await params;
+	const contentSections = ['news', 'sports', 'features', 'opinion'];
+	const placeholderSections = ['about', 'checkmate', 'contact', 'submit'];
+	const isContentSection = contentSections.includes(section);
+	const isPlaceholderSection = placeholderSections.includes(section);
+
+	if (!isContentSection && !isPlaceholderSection)
+	{
+		notFound();
+	}
+
+	const renderPlaceholder = (message: string) => (
+		<main className="min-h-screen bg-bg-main transition-colors duration-300 flex flex-col">
+			<Header />
+			<div className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-16 md:px-[30px]">
+				<h1
+					className="font-meta uppercase tracking-[0.04em] text-[#D6001C] dark:text-white transition-colors text-[44px] sm:text-[52px] lg:text-[60px]"
+					style={{ fontWeight: 400, lineHeight: 1 }}
+				>
+					{section}
+				</h1>
+				<div className="mt-8 border-y border-rule py-16 text-center">
+					<p className="font-copy text-[22px] leading-[1.3] text-text-main">{message}</p>
+				</div>
+			</div>
+			<Footer />
+		</main>
+	);
+
+	if (isPlaceholderSection)
+	{
+		return renderPlaceholder('This section does not have published articles yet.');
+	}
+
+	const payload = await getPayload({ config });
+
+	const articlesResponse = await payload.find({
+		collection: 'articles',
+		where: {
+			section: {
+				equals: section,
+			},
+			_status: {
+				equals: 'published',
+			},
+		},
+		sort: '-publishedDate',
+		limit: section === 'news' ? 200 : 30,
+		depth: section === 'opinion' ? 2 : 1,
+		select: {
+			title: true,
+			slug: true,
+			subdeck: true,
+			featuredImage: true,
+			section: true,
+			kicker: true,
+			publishedDate: true,
+			createdAt: true,
+			updatedAt: true,
+			authors: true,
+			...(section === 'opinion' && { opinionType: true }),
+			writeInAuthors: true,
+			isFollytechnic: true,
+		},
+	});
+
+	const articles = articlesResponse.docs;
+
+	if (articles.length === 0 && !(section === 'news'))
+	{
+		return renderPlaceholder('No articles found in this section yet.');
+	}
+
+	const allFormattedArticles = articles.map((a) => formatArticle(a)).filter(Boolean) as ComponentArticle[];
+	const sectionTitle = section.charAt(0).toUpperCase() + section.slice(1);
+	const breadcrumbJsonLd = {
+		'@context': 'https://schema.org',
+		'@type': 'BreadcrumbList',
+		itemListElement: [
+			{
+				'@type': 'ListItem',
+				position: 1,
+				name: 'Home',
+				item: '/',
+			},
+			{
+				'@type': 'ListItem',
+				position: 2,
+				name: sectionTitle,
+			},
+		],
+	};
+
+	return (
+		<main className={`min-h-screen bg-bg-main section-${section} transition-colors duration-300`}>
+			<script
+				type="application/ld+json"
+				dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd).replace(/</g, '\\u003c') }}
+			/>
+			<Header />
+			<SectionPageRouteContent section={section} context={{
+				payload,
+				sectionTitle,
+				allFormattedArticles,
+				articles
+			}} />
+			<Footer />
+		</main>
+	);
 }
