@@ -53,3 +53,6 @@ scripts/scraper/
 
 # generated payload files
 payload-types.ts
+
+# code visualization
+.VSCodeCounter
