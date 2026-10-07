@@ -1,68 +1,45 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import
+{
+	getCustomGridSlotLookup,
+	getSlotNumber,
+	type HomepageLayoutName,
+} from '@/lib/homepageSlots';
 import
 {
 	DndContext,
 	DragOverlay,
-	useDraggable,
-	useDroppable,
 	PointerSensor,
-	useSensor,
-	useSensors,
-	type DragStartEvent,
-	type DragEndEvent,
-	type CollisionDetection,
 	closestCenter,
 	pointerWithin,
+	useDraggable,
+	useDroppable,
+	useSensor,
+	useSensors,
+	type CollisionDetection,
+	type DragEndEvent,
+	type DragStartEvent,
 } from '@dnd-kit/core';
 import
 {
 	SortableContext,
+	arrayMove,
+	horizontalListSortingStrategy,
 	useSortable,
 	verticalListSortingStrategy,
-	horizontalListSortingStrategy,
-	arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import
-{
-	getSlotNumber,
-	getCustomGridSlotLookup,
-	type HomepageLayoutName,
-} from '@/lib/homepageSlots';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { ArticleData, SECTION_OPTIONS, Section } from '../articles';
 import './layout-editor.css';
-import { Article } from '@/payload-types';
+import { ROW_PRESETS } from './row-presets';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 type ImageDirection = 'top' | 'bottom' | 'left' | 'right' | 'none';
-
-type MediaImageSize = { url?: string | null } | null | undefined;
-type ArticleData = {
-	id: number;
-	title: Record<string, unknown>;
-	plainTitle?: string;
-	slug: string;
-	section: string;
-	publishedDate: string | null;
-	createdAt: string;
-	featuredImage?:
-	| {
-		url?: string | null;
-		thumbnailURL?: string | null;
-		alt?: string | null;
-		sizes?: { card?: MediaImageSize; gallery?: MediaImageSize };
-	}
-	| number
-	| null;
-	subdeck?: string | null;
-	kicker?: string | null;
-	authors?: Array<number | { firstName: string; lastName: string }>;
-	writeInAuthors?: Array<{ name: string }>;
-};
 
 type GridCell = {
 	id: string;
@@ -89,7 +66,7 @@ const pointerThenCenter: CollisionDetection = (args) =>
 	return closestCenter(args);
 };
 
-const SECTION_COLORS: Record<string, string> = {
+const SECTION_COLORS: Record<Section, string> = {
 	news: '#dc2626',
 	features: '#7c3aed',
 	opinion: '#2563eb',
@@ -103,18 +80,6 @@ const DIRECTION_ICONS: Record<ImageDirection, string> = {
 	bottom: '↓',
 	none: '⊘',
 };
-
-const ROW_PRESETS: { label: string; spans: number[]; icon: string }[] = [
-	{ label: 'Full', spans: [12], icon: '████████████' },
-	{ label: 'Half', spans: [6, 6], icon: '██████ ██████' },
-	{ label: 'Thirds', spans: [4, 4, 4], icon: '████ ████ ████' },
-	{ label: 'Quarters', spans: [3, 3, 3, 3], icon: '███ ███ ███ ███' },
-	{ label: 'Wide + Narrow', spans: [8, 4], icon: '████████ ████' },
-	{ label: 'Narrow + Wide', spans: [4, 8], icon: '████ ████████' },
-	{ label: 'Featured', spans: [7, 5], icon: '███████ █████' },
-	{ label: 'Sidebar', spans: [5, 7], icon: '█████ ███████' },
-	{ label: 'Three Uneven', spans: [6, 3, 3], icon: '██████ ███ ███' },
-];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -241,7 +206,7 @@ function RowPresets({ onAdd }: { onAdd: (spans: number[]) => void })
 			<div className="le-presets-list">
 				{ROW_PRESETS.map((p) => (
 					<button key={p.label} className="le-preset-btn" onClick={() => onAdd(p.spans)} title={p.label}>
-						<span className="le-preset-icon">{p.icon}</span>
+						<span className="le-preset-icon">{p.getIcon()}</span>
 						<span className="le-preset-name">{p.label}</span>
 					</button>
 				))}
@@ -971,154 +936,6 @@ function AriesDropSlot({ slotId, label, article, isLead, onClear, emptyConstrain
 	);
 }
 
-function AriesEditor({ data, articleMap, onClear, onToggleLeadImportant }: {
-	data: AriesData;
-	articleMap: Map<number, ArticleData>;
-	onClear: (slotId: string) => void;
-	onToggleLeadImportant: () => void;
-})
-{
-	const leftCount = ariesColSlotCount(data.left, articleMap);
-	const rightCount = ariesColSlotCount(data.right, articleMap);
-	const hasBottom = data.bottom.some((id) => id !== null);
-
-	// Interleave left/right columns into a 2×N grid: left-0, right-0, left-1, right-1, ...
-	// Both columns always show the same number of rows so the grid stays symmetric.
-	const maxRows = Math.max(leftCount, rightCount);
-	const heroSlots: { slotId: string; article: ArticleData | null }[] = [];
-	for (let i = 0; i < maxRows; i++)
-	{
-		heroSlots.push({
-			slotId: `left-${i}`,
-			article: i < leftCount && data.left[i] !== null ? articleMap.get(data.left[i]!) || null : null,
-		});
-		heroSlots.push({
-			slotId: `right-${i}`,
-			article: i < rightCount && data.right[i] !== null ? articleMap.get(data.right[i]!) || null : null,
-		});
-	}
-
-	return (
-		<div className="le-aries-canvas">
-			<div className="le-aries-description">
-				<span className="le-presets-label">Aries</span>
-				<span className="le-aries-desc-text">
-					Lead story + hero grid. Columns collapse from 3→2 slots when a photo article is placed.
-				</span>
-			</div>
-			<div className="le-aries-top">
-				<div className="le-aries-lead-col">
-					<AriesDropSlot
-						slotId="lead"
-						label="Lead Story"
-						article={data.lead !== null ? articleMap.get(data.lead) || null : null}
-						isLead
-						onClear={() => onClear('lead')}
-						numberingSkeleton="aries"
-					/>
-					<label className="le-aries-important-toggle">
-						<input
-							type="checkbox"
-							checked={!!data.leadImportant}
-							onChange={onToggleLeadImportant}
-						/>
-						<span>Important</span>
-					</label>
-				</div>
-				<div className="le-aries-hero-grid">
-					{heroSlots.map(({ slotId, article }) => (
-						<AriesDropSlot
-							key={slotId}
-							slotId={slotId}
-							label={slotId.replace('-', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-							article={article}
-							isLead={false}
-							onClear={() => onClear(slotId)}
-							numberingSkeleton="aries"
-						/>
-					))}
-				</div>
-			</div>
-			{/* Bottom row */}
-			<div className="le-aries-bottom">
-				<div className="le-aries-hero-col-label">
-					Bottom row &middot; optional{hasBottom ? '' : ' (empty — will be hidden)'}
-				</div>
-				<div className="le-aries-bottom-grid">
-					<div className="le-aries-bottom-left">
-						<AriesDropSlot
-							slotId="bottom-0"
-							label="Text Feature"
-							article={data.bottom[0] !== null ? articleMap.get(data.bottom[0]!) || null : null}
-							isLead={false}
-							onClear={() => onClear('bottom-0')}
-							emptyConstraint="text"
-							numberingSkeleton="aries"
-						/>
-						<div className="le-aries-bottom-left-pair">
-							{[1, 2].map((i) => (
-								<AriesDropSlot
-									key={`bottom-${i}`}
-									slotId={`bottom-${i}`}
-									label={`Left ${i}`}
-									article={data.bottom[i] !== null ? articleMap.get(data.bottom[i]!) || null : null}
-									isLead={false}
-									onClear={() => onClear(`bottom-${i}`)}
-									emptyConstraint="text"
-									numberingSkeleton="aries"
-								/>
-							))}
-						</div>
-						<AriesDropSlot
-							slotId="bottom-3"
-							label="Text Feature 2"
-							article={data.bottom[3] !== null ? articleMap.get(data.bottom[3]!) || null : null}
-							isLead={false}
-							onClear={() => onClear('bottom-3')}
-							emptyConstraint="text"
-							numberingSkeleton="aries"
-						/>
-					</div>
-					<div className="le-aries-bottom-right">
-						<AriesDropSlot
-							slotId="bottom-4"
-							label="Image + Text"
-							article={data.bottom[4] !== null ? articleMap.get(data.bottom[4]!) || null : null}
-							isLead={false}
-							onClear={() => onClear('bottom-4')}
-							emptyConstraint="image"
-							numberingSkeleton="aries"
-						/>
-						<div className="le-aries-bottom-right-pair">
-							{[5, 6].map((i) => (
-								<AriesDropSlot
-									key={`bottom-${i}`}
-									slotId={`bottom-${i}`}
-									label={`Right ${i - 4}`}
-									article={data.bottom[i] !== null ? articleMap.get(data.bottom[i]!) || null : null}
-									isLead={false}
-									onClear={() => onClear(`bottom-${i}`)}
-									emptyConstraint="text"
-									numberingSkeleton="aries"
-								/>
-							))}
-						</div>
-						<AriesDropSlot
-							slotId="bottom-7"
-							label="Long Text"
-							article={data.bottom[7] !== null ? articleMap.get(data.bottom[7]!) || null : null}
-							isLead={false}
-							onClear={() => onClear('bottom-7')}
-							emptyConstraint="text"
-							numberingSkeleton="aries"
-						/>
-					</div>
-				</div>
-			</div>
-		</div>
-	);
-}
-
 // ---------------------------------------------------------------------------
 // Section Layout Editor
 // ---------------------------------------------------------------------------
@@ -1377,18 +1194,679 @@ type DroppableData = PoolDroppableData | CellDroppableData;
 // Pool Drop Zone (acts as trash when dragging from layout)
 // ---------------------------------------------------------------------------
 
-function PoolDropZone({ children }: { children: React.ReactNode })
+function PoolDropZone()
 {
+	const { sectionLayouts, filteredArticles, sectionFilter, setSectionFilter, grid, search, setSearch } = useLayoutEditorContext();
 	const { isOver, setNodeRef } = useDroppable({
 		id: 'pool-drop-zone',
 		data: { pool: true } satisfies PoolDroppableData,
 	});
 
+	const heroUsedIds = collectArticleIds(grid);
+	const sectionPinnedIds = new Set<number>();
+
+	for (const sec of SECTION_NAMES)
+	{
+		for (const id of sectionLayouts[sec].pinnedArticles)
+		{
+			if (id) sectionPinnedIds.add(id);
+		}
+	}
+
+	const usedIds = new Set([...heroUsedIds, ...sectionPinnedIds]);
+
 	return (
 		<div ref={setNodeRef} className={`le-pool ${isOver ? 'le-pool-drop-active' : ''}`}>
-			{children}
+			<div className="le-pool-header">
+				<h2 className="le-pool-title">Articles</h2>
+				<span className="le-pool-count">{filteredArticles.length}</span>
+			</div>
+			<input type="text" className="le-pool-search" placeholder="Search articles..." value={search} onChange={(e) => setSearch(e.target.value)} />
+			<div className="le-pool-filters">
+				{SECTION_OPTIONS.map((s) => (
+					<button key={s} className={`le-filter-pill ${sectionFilter === s ? 'le-filter-active' : ''}`}
+						onClick={() => setSectionFilter(s)}
+						style={sectionFilter === s && s !== 'all' ? { background: SECTION_COLORS[s], borderColor: SECTION_COLORS[s] } : undefined}
+					>{s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}</button>
+				))}
+			</div>
+			<div className="le-pool-list">
+				{filteredArticles.map((article) => (
+					<DraggablePoolCard key={article.id} article={article} isUsed={usedIds.has(article.id)} />
+				))}
+				{filteredArticles.length === 0 && <div className="le-pool-empty">No articles found</div>}
+			</div>
 		</div>
 	);
+}
+
+function AriesLayoutEditor()
+{
+	const { aries, setAries, articleMap, markDirty } = useLayoutEditorContext();
+	const data = aries;
+	const onClear = (slotId: string) =>
+	{
+		setAries((prev) =>
+		{
+			if (slotId === 'lead') return { ...prev, lead: null };
+			const [side, idx] = slotId.split('-');
+			if (side === 'left' || side === 'right')
+			{
+				const next = { ...prev, [side]: [...prev[side]] };
+				next[side][Number(idx)] = null;
+				return next;
+			}
+			if (side === 'bottom')
+			{
+				const next = { ...prev, bottom: [...prev.bottom] };
+				next.bottom[Number(idx)] = null;
+				return next;
+			}
+			return prev;
+		});
+
+		markDirty();
+	}
+
+	const onToggleLeadImportant = () =>
+	{
+		setAries((prev) => ({ ...prev, leadImportant: !prev.leadImportant }));
+		markDirty();
+	}
+
+	const leftCount = ariesColSlotCount(data.left, articleMap);
+	const rightCount = ariesColSlotCount(data.right, articleMap);
+	const hasBottom = data.bottom.some((id) => id !== null);
+
+	// Interleave left/right columns into a 2×N grid: left-0, right-0, left-1, right-1, ...
+	// Both columns always show the same number of rows so the grid stays symmetric.
+	const maxRows = Math.max(leftCount, rightCount);
+	const heroSlots: { slotId: string; article: ArticleData | null }[] = [];
+	for (let i = 0; i < maxRows; i++)
+	{
+		heroSlots.push({
+			slotId: `left-${i}`,
+			article: i < leftCount && data.left[i] !== null ? articleMap.get(data.left[i]!) || null : null,
+		});
+		heroSlots.push({
+			slotId: `right-${i}`,
+			article: i < rightCount && data.right[i] !== null ? articleMap.get(data.right[i]!) || null : null,
+		});
+	}
+
+	return (
+		<div className="le-aries-canvas">
+			<div className="le-aries-description">
+				<span className="le-presets-label">Aries</span>
+				<span className="le-aries-desc-text">
+					Lead story + hero grid. Columns collapse from 3→2 slots when a photo article is placed.
+				</span>
+			</div>
+			<div className="le-aries-top">
+				<div className="le-aries-lead-col">
+					<AriesDropSlot
+						slotId="lead"
+						label="Lead Story"
+						article={data.lead !== null ? articleMap.get(data.lead) || null : null}
+						isLead
+						onClear={() => onClear('lead')}
+						numberingSkeleton="aries"
+					/>
+					<label className="le-aries-important-toggle">
+						<input
+							type="checkbox"
+							checked={!!data.leadImportant}
+							onChange={onToggleLeadImportant}
+						/>
+						<span>Important</span>
+					</label>
+				</div>
+				<div className="le-aries-hero-grid">
+					{heroSlots.map(({ slotId, article }) => (
+						<AriesDropSlot
+							key={slotId}
+							slotId={slotId}
+							label={slotId.replace('-', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+							article={article}
+							isLead={false}
+							onClear={() => onClear(slotId)}
+							numberingSkeleton="aries"
+						/>
+					))}
+				</div>
+			</div>
+			{/* Bottom row */}
+			<div className="le-aries-bottom">
+				<div className="le-aries-hero-col-label">
+					Bottom row &middot; optional{hasBottom ? '' : ' (empty — will be hidden)'}
+				</div>
+				<div className="le-aries-bottom-grid">
+					<div className="le-aries-bottom-left">
+						<AriesDropSlot
+							slotId="bottom-0"
+							label="Text Feature"
+							article={data.bottom[0] !== null ? articleMap.get(data.bottom[0]!) || null : null}
+							isLead={false}
+							onClear={() => onClear('bottom-0')}
+							emptyConstraint="text"
+							numberingSkeleton="aries"
+						/>
+						<div className="le-aries-bottom-left-pair">
+							{[1, 2].map((i) => (
+								<AriesDropSlot
+									key={`bottom-${i}`}
+									slotId={`bottom-${i}`}
+									label={`Left ${i}`}
+									article={data.bottom[i] !== null ? articleMap.get(data.bottom[i]!) || null : null}
+									isLead={false}
+									onClear={() => onClear(`bottom-${i}`)}
+									emptyConstraint="text"
+									numberingSkeleton="aries"
+								/>
+							))}
+						</div>
+						<AriesDropSlot
+							slotId="bottom-3"
+							label="Text Feature 2"
+							article={data.bottom[3] !== null ? articleMap.get(data.bottom[3]!) || null : null}
+							isLead={false}
+							onClear={() => onClear('bottom-3')}
+							emptyConstraint="text"
+							numberingSkeleton="aries"
+						/>
+					</div>
+					<div className="le-aries-bottom-right">
+						<AriesDropSlot
+							slotId="bottom-4"
+							label="Image + Text"
+							article={data.bottom[4] !== null ? articleMap.get(data.bottom[4]!) || null : null}
+							isLead={false}
+							onClear={() => onClear('bottom-4')}
+							emptyConstraint="image"
+							numberingSkeleton="aries"
+						/>
+						<div className="le-aries-bottom-right-pair">
+							{[5, 6].map((i) => (
+								<AriesDropSlot
+									key={`bottom-${i}`}
+									slotId={`bottom-${i}`}
+									label={`Right ${i - 4}`}
+									article={data.bottom[i] !== null ? articleMap.get(data.bottom[i]!) || null : null}
+									isLead={false}
+									onClear={() => onClear(`bottom-${i}`)}
+									emptyConstraint="text"
+									numberingSkeleton="aries"
+								/>
+							))}
+						</div>
+						<AriesDropSlot
+							slotId="bottom-7"
+							label="Long Text"
+							article={data.bottom[7] !== null ? articleMap.get(data.bottom[7]!) || null : null}
+							isLead={false}
+							onClear={() => onClear('bottom-7')}
+							emptyConstraint="text"
+							numberingSkeleton="aries"
+						/>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function GeminiLayoutEditor()
+{
+	const { markDirty, aries, setAries, articleMap } = useLayoutEditorContext();
+	// Default: show subdeck on hero/left/right; hide on bottom cards (matches the prior render).
+	const subdeckDefault = (slotId: string) => !slotId.startsWith('bottom-');
+	const subdeckFor = (slotId: string): boolean =>
+	{
+		const v = aries.showSubdeck?.[slotId];
+		return v === undefined ? subdeckDefault(slotId) : !!v;
+	};
+	const toggleSubdeck = (slotId: string) =>
+	{
+		setAries((p) =>
+		{
+			const current = subdeckFor(slotId);
+			return { ...p, showSubdeck: { ...(p.showSubdeck ?? {}), [slotId]: !current } };
+		});
+		markDirty();
+	};
+	const SubdeckToggle = ({ slotId }: { slotId: string }) => (
+		<label className="le-subdeck-toggle">
+			<input
+				type="checkbox"
+				checked={subdeckFor(slotId)}
+				onChange={() => toggleSubdeck(slotId)}
+			/>
+			<span>Show subdeck</span>
+		</label>
+	);
+
+	return <div className="le-aries-canvas">
+		<div className="le-aries-description">
+			<span className="le-presets-label">Gemini</span>
+			<span className="le-aries-desc-text">
+				Three-column: text-only headline stack at left, big hero photo and headline center with a secondary item below, photo features stacked at right, and a row of small cards across the bottom.
+			</span>
+		</div>
+		<div className="le-gemini-top">
+			<div className="le-gemini-col le-gemini-left">
+				<div className="le-gemini-col-label">Text stack (all optional)</div>
+				{[0, 1, 2, 3, 4, 5].map((i) => (
+					<div key={`left-${i}`} className="le-gemini-slot">
+						<AriesDropSlot
+							slotId={`left-${i}`}
+							label={`Headline ${i + 1}`}
+							article={aries.left[i] !== null ? articleMap.get(aries.left[i]!) || null : null}
+							isLead={false}
+							onClear={() => { setAries((p) => { const next = { ...p, left: [...p.left] }; next.left[i] = null; return next; }); markDirty(); }}
+							numberingSkeleton="gemini"
+						/>
+						<SubdeckToggle slotId={`left-${i}`} />
+					</div>
+				))}
+			</div>
+			<div className="le-gemini-col le-gemini-center">
+				<div className="le-gemini-col-label">Center</div>
+				<AriesDropSlot
+					slotId="lead"
+					label="Hero (photo + lead)"
+					article={aries.lead !== null ? articleMap.get(aries.lead) || null : null}
+					isLead
+					onClear={() => { setAries((p) => ({ ...p, lead: null })); markDirty(); }}
+					numberingSkeleton="gemini"
+				/>
+				<label className="le-aries-important-toggle">
+					<input
+						type="checkbox"
+						checked={!!aries.leadImportant}
+						onChange={() => { setAries((p) => ({ ...p, leadImportant: !p.leadImportant })); markDirty(); }}
+					/>
+					<span>Important</span>
+				</label>
+				<SubdeckToggle slotId="lead" />
+				<div className="le-lead-position-toggle">
+					<span>Photo:</span>
+					<button
+						type="button"
+						className={(aries.leadPhotoPosition ?? 'above') === 'above' ? 'active' : ''}
+						onClick={() => { setAries((p) => ({ ...p, leadPhotoPosition: 'above' })); markDirty(); }}
+					>
+						Above text
+					</button>
+					<button
+						type="button"
+						className={aries.leadPhotoPosition === 'below' ? 'active' : ''}
+						onClick={() => { setAries((p) => ({ ...p, leadPhotoPosition: 'below' })); markDirty(); }}
+					>
+						Below text
+					</button>
+				</div>
+			</div>
+			<div className="le-gemini-col le-gemini-right">
+				<div className="le-gemini-col-label">Feature stack (all optional)</div>
+				{[0, 1, 2, 3, 4].map((i) => (
+					<div key={`right-${i}`} className="le-gemini-slot">
+						<AriesDropSlot
+							slotId={`right-${i}`}
+							label={`Feature ${i + 1}`}
+							article={aries.right[i] !== null ? articleMap.get(aries.right[i]!) || null : null}
+							isLead={false}
+							onClear={() => { setAries((p) => { const next = { ...p, right: [...p.right] }; next.right[i] = null; return next; }); markDirty(); }}
+							numberingSkeleton="gemini"
+						/>
+						<SubdeckToggle slotId={`right-${i}`} />
+					</div>
+				))}
+			</div>
+		</div>
+		<div className="le-gemini-bottom-label">Bottom row (under left + center)</div>
+		<div className="le-gemini-bottom-grid">
+			{[0, 1].map((i) => (
+				<div key={`bottom-${i}`} className="le-gemini-slot">
+					<AriesDropSlot
+						slotId={`bottom-${i}`}
+						label={`Card ${i + 1}`}
+						article={aries.bottom[i] !== null ? articleMap.get(aries.bottom[i]!) || null : null}
+						isLead={false}
+						onClear={() => { setAries((p) => { const next = { ...p, bottom: [...p.bottom] }; next.bottom[i] = null; return next; }); markDirty(); }}
+						numberingSkeleton="gemini"
+					/>
+					<SubdeckToggle slotId={`bottom-${i}`} />
+				</div>
+			))}
+		</div>
+	</div>;
+}
+
+function TaurusLayoutEditor()
+{
+	const { markDirty, aries, setAries, articleMap } = useLayoutEditorContext();
+	/* Top-area Taurus: reuses aries state — lead=feature, left=supporting, right=list */
+	return <div className="le-aries-canvas">
+		<div className="le-aries-description">
+			<span className="le-presets-label">Taurus</span>
+			<span className="le-aries-desc-text">Feature story with image + supporting text + list rail.</span>
+		</div>
+		<div className="le-tau-grid">
+			<div className="le-tau-feature">
+				<AriesDropSlot slotId="lead" label="Feature" article={aries.lead !== null ? articleMap.get(aries.lead) || null : null} isLead onClear={() => { setAries((p) => ({ ...p, lead: null })); markDirty(); }} numberingSkeleton="taurus" />
+			</div>
+			<div className="le-tau-supporting">
+				{[0, 1, 2].map((i) => (
+					<AriesDropSlot key={`left-${i}`} slotId={`left-${i}`} label={`Support ${i + 1}`} article={aries.left[i] !== null ? articleMap.get(aries.left[i]!) || null : null} isLead={false} onClear={() => { setAries((p) => { const next = { ...p, left: [...p.left] }; next.left[i] = null; return next; }); markDirty(); }} numberingSkeleton="taurus" />
+				))}
+			</div>
+			<div className="le-tau-list">
+				{[0, 1, 2].map((i) => (
+					<AriesDropSlot key={`right-${i}`} slotId={`right-${i}`} label={`List ${i + 1}`} article={aries.right[i] !== null ? articleMap.get(aries.right[i]!) || null : null} isLead={false} onClear={() => { setAries((p) => { const next = { ...p, right: [...p.right] }; next.right[i] = null; return next; }); markDirty(); }} numberingSkeleton="taurus" />
+				))}
+			</div>
+		</div>
+	</div>;
+}
+
+function CustomLayoutEditor()
+{
+	const { markDirty, grid, setGrid, articleMap } = useLayoutEditorContext();
+	const rowSortIds = grid.map((r) => `sortrow-${r.id}`);
+
+	/**
+	 * Column-major slot-number lookup for the custom grid. Recomputed whenever
+	 * grid structure changes. Used to show "#N" badges on each cell during
+	 * drag-and-drop so editors can reference a slot by its stable number.
+	 */
+	const customGridSlotLookup = getCustomGridSlotLookup(grid);
+	// ---- Grid mutations ----
+	const addRow = useCallback((spans: number[]) => { setGrid((p) => [...p, makeRow(spans)]); markDirty(); }, [markDirty]);
+	const deleteRow = useCallback((rowId: string) => { setGrid((p) => p.filter((r) => r.id !== rowId)); markDirty(); }, [markDirty]);
+
+	const addCell = useCallback((rowId: string) =>
+	{
+		setGrid((prev) => prev.map((row) =>
+		{
+			if (row.id !== rowId) return row;
+			const total = row.cells.reduce((s, c) => s + c.span, 0);
+			const remaining = 12 - total;
+			if (remaining <= 0) return row;
+			return { ...row, cells: [...row.cells, { id: newId(), span: remaining, articleId: null, direction: 'top' as ImageDirection }] };
+		}));
+		markDirty();
+	}, [markDirty]);
+
+	const updateCell = useCallback((cellId: string, updates: Partial<GridCell>) =>
+	{
+		setGrid((prev) => prev.map((row) => ({ ...row, cells: row.cells.map((c) => c.id === cellId ? { ...c, ...updates } : c) })));
+		markDirty();
+	}, [markDirty]);
+
+	const clearCell = useCallback((cellId: string) => { updateCell(cellId, { articleId: null }); }, [updateCell]);
+
+	const deleteCell = useCallback((rowId: string, cellId: string) =>
+	{
+		setGrid((prev) => prev.map((row) =>
+		{
+			if (row.id !== rowId || row.cells.length <= 1) return row;
+			return { ...row, cells: row.cells.filter((c) => c.id !== cellId) };
+		}));
+		markDirty();
+	}, [markDirty]);
+
+	const resizeCell = useCallback((cellId: string, delta: number) =>
+	{
+		setGrid((prev) => prev.map((row) =>
+		{
+			const idx = row.cells.findIndex((c) => c.id === cellId);
+			if (idx < 0) return row;
+			const cell = row.cells[idx];
+			const newSpan = Math.max(1, Math.min(12, cell.span + delta));
+			const rowTotal = row.cells.reduce((s, c) => s + c.span, 0) - cell.span + newSpan;
+			if (rowTotal > 12) return row;
+			return { ...row, cells: row.cells.map((c) => c.id === cellId ? { ...c, span: newSpan } : c) };
+		}));
+		markDirty();
+	}, [markDirty]);
+
+	// Stack mutations
+	const splitCell = useCallback((cellId: string) =>
+	{
+		setGrid((prev) => prev.map((row) => ({
+			...row,
+			cells: row.cells.map((cell) =>
+			{
+				if (cell.id !== cellId) return cell;
+				return {
+					...cell, articleId: null, children: [
+						{ id: newId(), span: 12, articleId: cell.articleId, direction: cell.direction },
+						{ id: newId(), span: 12, articleId: null, direction: 'top' as ImageDirection },
+					]
+				};
+			}),
+		})));
+		markDirty();
+	}, [markDirty]);
+
+	const addSubCell = useCallback((cellId: string) =>
+	{
+		setGrid((prev) => prev.map((row) => ({
+			...row,
+			cells: row.cells.map((cell) =>
+			{
+				if (cell.id !== cellId || !cell.children) return cell;
+				return { ...cell, children: [...cell.children, { id: newId(), span: 12, articleId: null, direction: 'top' as ImageDirection }] };
+			}),
+		})));
+		markDirty();
+	}, [markDirty]);
+
+	const updateSubCell = useCallback((_cellId: string, subId: string, updates: Partial<GridCell>) =>
+	{
+		setGrid((prev) => prev.map((row) => ({ ...row, cells: deepUpdateCell(row.cells, subId, updates) })));
+		markDirty();
+	}, [markDirty]);
+
+	const clearSubCell = useCallback((_cellId: string, subId: string) =>
+	{
+		setGrid((prev) => prev.map((row) => ({ ...row, cells: deepUpdateCell(row.cells, subId, { articleId: null }) })));
+		markDirty();
+	}, [markDirty]);
+
+	const deleteSubCell = useCallback((cellId: string, subId: string) =>
+	{
+		setGrid((prev) => prev.map((row) => ({
+			...row,
+			cells: row.cells.map((cell) =>
+			{
+				if (cell.id !== cellId || !cell.children) return cell;
+				const newChildren = cell.children.filter((c) => c.id !== subId);
+				if (newChildren.length <= 1)
+				{
+					const remaining = newChildren[0];
+					return { ...cell, articleId: remaining?.articleId ?? null, direction: remaining?.direction ?? 'top', children: undefined };
+				}
+				return { ...cell, children: newChildren };
+			}),
+		})));
+		markDirty();
+	}, [markDirty]);
+
+	const unsplitCell = useCallback((cellId: string) =>
+	{
+		setGrid((prev) => prev.map((row) => ({
+			...row,
+			cells: row.cells.map((cell) =>
+			{
+				if (cell.id !== cellId || !cell.children) return cell;
+				const first = cell.children[0];
+				return { ...cell, articleId: first?.articleId ?? null, direction: first?.direction ?? 'top', children: undefined };
+			}),
+		})));
+		markDirty();
+	}, [markDirty]);
+
+	return <>
+		<RowPresets onAdd={addRow} />
+
+		{grid.length === 0 && <div className="le-empty-canvas"><p>No rows yet. Click a preset above to add your first row.</p></div>}
+
+		<SortableContext items={rowSortIds} strategy={verticalListSortingStrategy}>
+			{grid.map((row, i) => (
+				<SortableGridRow
+					key={row.id} row={row} rowIndex={i} articleMap={articleMap}
+					onDeleteRow={() => deleteRow(row.id)}
+					onAddCell={() => addCell(row.id)}
+					onUpdateCell={(cellId, updates) => updateCell(cellId, updates)}
+					onDeleteCell={(cellId) => deleteCell(row.id, cellId)}
+					onClearCell={(cellId) => clearCell(cellId)}
+					onSplitCell={(cellId) => splitCell(cellId)}
+					onAddSubCell={(cellId) => addSubCell(cellId)}
+					onUpdateSubCell={(cellId, subId, updates) => updateSubCell(cellId, subId, updates)}
+					onClearSubCell={(cellId, subId) => clearSubCell(cellId, subId)}
+					onDeleteSubCell={(cellId, subId) => deleteSubCell(cellId, subId)}
+					onUnsplitCell={(cellId) => unsplitCell(cellId)}
+					onResizeCell={(cellId, delta) => resizeCell(cellId, delta)}
+					slotNumberLookup={customGridSlotLookup}
+				/>
+			))}
+		</SortableContext>
+
+		{grid.length > 0 && <RowPresets onAdd={addRow} />}
+	</>;
+}
+
+function SkeletonSwitcher({
+	skeleton
+}: {
+	skeleton: SkeletonId
+})
+{
+	switch (skeleton)
+	{
+		case 'aries':
+			return <AriesLayoutEditor />;
+		case 'taurus':
+			return <TaurusLayoutEditor />;
+		case 'gemini':
+			return <GeminiLayoutEditor />;
+		case 'custom':
+			return <CustomLayoutEditor />;
+	}
+}
+
+function SkeletonPicker({
+	skeleton,
+	setSkeleton
+}: {
+	skeleton: SkeletonId,
+	setSkeleton: React.Dispatch<React.SetStateAction<SkeletonId>>
+})
+{
+	const { markDirty } = useLayoutEditorContext();
+
+	// ---- Skeleton switch ----
+	const handleSkeletonChange = useCallback((newSkeleton: SkeletonId) =>
+	{
+		setSkeleton(newSkeleton);
+		markDirty();
+	}, [markDirty]);
+
+	return <div className="le-skeleton-bar">
+		<span className="le-presets-label">Skeleton</span>
+		<div className="le-skeleton-list">
+			{TOP_SKELETONS.map((skel) => (
+				<button
+					key={skel.id}
+					className={`le-skeleton-btn ${skeleton === skel.id ? 'le-skeleton-active' : ''}`}
+					onClick={() => handleSkeletonChange(skel.id)}
+					title={skel.description}
+				>
+					<span className="le-skeleton-icon">{skel.icon}</span>
+					<span className="le-skeleton-name">{skel.name}</span>
+					{!skel.pinned && <span className="le-skeleton-beta">beta</span>}
+				</button>
+			))}
+		</div>
+	</div>;
+}
+
+function SectionLayouts()
+{
+	const { markDirty, sectionLayouts, setSectionLayouts, articleMap } = useLayoutEditorContext();
+
+	const removeSectionPin = useCallback((section: SectionName, index: number) =>
+	{
+		setSectionLayouts((prev) =>
+		{
+			const layout = { ...prev[section], pinnedArticles: prev[section].pinnedArticles.filter((_, i) => i !== index) };
+			return { ...prev, [section]: layout };
+		});
+		markDirty();
+	}, [markDirty]);
+
+	const changeSectionSkeleton = useCallback((section: SectionName, skel: SkeletonId) =>
+	{
+		setSectionLayouts((prev) => ({
+			...prev,
+			[section]: { ...prev[section], skeleton: skel },
+		}));
+		markDirty();
+	}, [markDirty]);
+
+	const addSectionSlot = useCallback((section: SectionName) =>
+	{
+		setSectionLayouts((prev) =>
+		{
+			const layout = { ...prev[section], pinnedArticles: [...prev[section].pinnedArticles, 0] };
+			return { ...prev, [section]: layout };
+		});
+		markDirty();
+	}, [markDirty]);
+
+	return <div className="le-section-editors">
+		<div className="le-section-editors-header">
+			<h2 className="le-section-editors-title">Section Layouts</h2>
+			<span className="le-section-editors-subtitle">Pin articles to control what appears in each section. Unpinned slots auto-fill.</span>
+		</div>
+		{SECTION_NAMES.map((sec) => (
+			<SectionEditor
+				key={sec}
+				sectionName={sec}
+				layout={sectionLayouts[sec]}
+				articleMap={articleMap}
+				onRemovePin={(index) => removeSectionPin(sec, index)}
+				onAddSlot={() => addSectionSlot(sec)}
+				onChangeSkeleton={(skel) => changeSectionSkeleton(sec, skel)}
+			/>
+		))}
+	</div>;
+}
+
+const LayoutEditorContext = React.createContext<{
+	markDirty: () => void,
+	setSectionLayouts: React.Dispatch<React.SetStateAction<AllSectionLayouts>>,
+	sectionLayouts: AllSectionLayouts,
+	filteredArticles: ArticleData[],
+	grid: GridRow[],
+	setGrid: React.Dispatch<React.SetStateAction<GridRow[]>>,
+	aries: AriesData,
+	setAries: React.Dispatch<React.SetStateAction<AriesData>>,
+	articleMap: Map<number, ArticleData>,
+	sectionFilter: string,
+	setSectionFilter: React.Dispatch<React.SetStateAction<string>>,
+	search: string,
+	setSearch: React.Dispatch<React.SetStateAction<string>>
+} | undefined>(undefined);
+
+function useLayoutEditorContext()
+{
+	const context = useContext(LayoutEditorContext);
+
+	if (context === undefined) throw new Error("No LayoutEditorContext");
+
+	return context;
 }
 
 // ---------------------------------------------------------------------------
@@ -1413,28 +1891,7 @@ export function LayoutEditor()
 	const docIdRef = useRef<string | null>(null);
 
 	const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-
 	const articleMap = new Map(articles.map((a) => [a.id, a]));
-	const sectionPinnedIds = new Set<number>();
-	for (const sec of SECTION_NAMES)
-	{
-		for (const id of sectionLayouts[sec].pinnedArticles)
-		{
-			if (id) sectionPinnedIds.add(id);
-		}
-	}
-	const heroUsedIds = (skeleton === 'aries' || skeleton === 'taurus' || skeleton === 'gemini')
-		? ariesUsedIds(aries)
-		: collectArticleIds(grid);
-	const usedIds = new Set([...heroUsedIds, ...sectionPinnedIds]);
-	const rowSortIds = grid.map((r) => `sortrow-${r.id}`);
-
-	/**
-	 * Column-major slot-number lookup for the custom grid. Recomputed whenever
-	 * grid structure changes. Used to show "#N" badges on each cell during
-	 * drag-and-drop so editors can reference a slot by its stable number.
-	 */
-	const customGridSlotLookup = getCustomGridSlotLookup(grid);
 
 	// ---- Fetch ----
 	useEffect(() =>
@@ -1589,136 +2046,7 @@ export function LayoutEditor()
 		})();
 	}, []);
 
-	// ---- Grid mutations ----
 	const markDirty = useCallback(() => setSaved(false), []);
-
-	const addRow = useCallback((spans: number[]) => { setGrid((p) => [...p, makeRow(spans)]); markDirty(); }, [markDirty]);
-	const deleteRow = useCallback((rowId: string) => { setGrid((p) => p.filter((r) => r.id !== rowId)); markDirty(); }, [markDirty]);
-
-	const addCell = useCallback((rowId: string) =>
-	{
-		setGrid((prev) => prev.map((row) =>
-		{
-			if (row.id !== rowId) return row;
-			const total = row.cells.reduce((s, c) => s + c.span, 0);
-			const remaining = 12 - total;
-			if (remaining <= 0) return row;
-			return { ...row, cells: [...row.cells, { id: newId(), span: remaining, articleId: null, direction: 'top' as ImageDirection }] };
-		}));
-		markDirty();
-	}, [markDirty]);
-
-	const updateCell = useCallback((cellId: string, updates: Partial<GridCell>) =>
-	{
-		setGrid((prev) => prev.map((row) => ({ ...row, cells: row.cells.map((c) => c.id === cellId ? { ...c, ...updates } : c) })));
-		markDirty();
-	}, [markDirty]);
-
-	const clearCell = useCallback((cellId: string) => { updateCell(cellId, { articleId: null }); }, [updateCell]);
-
-	const deleteCell = useCallback((rowId: string, cellId: string) =>
-	{
-		setGrid((prev) => prev.map((row) =>
-		{
-			if (row.id !== rowId || row.cells.length <= 1) return row;
-			return { ...row, cells: row.cells.filter((c) => c.id !== cellId) };
-		}));
-		markDirty();
-	}, [markDirty]);
-
-	const resizeCell = useCallback((cellId: string, delta: number) =>
-	{
-		setGrid((prev) => prev.map((row) =>
-		{
-			const idx = row.cells.findIndex((c) => c.id === cellId);
-			if (idx < 0) return row;
-			const cell = row.cells[idx];
-			const newSpan = Math.max(1, Math.min(12, cell.span + delta));
-			const rowTotal = row.cells.reduce((s, c) => s + c.span, 0) - cell.span + newSpan;
-			if (rowTotal > 12) return row;
-			return { ...row, cells: row.cells.map((c) => c.id === cellId ? { ...c, span: newSpan } : c) };
-		}));
-		markDirty();
-	}, [markDirty]);
-
-
-
-	// Stack mutations
-	const splitCell = useCallback((cellId: string) =>
-	{
-		setGrid((prev) => prev.map((row) => ({
-			...row,
-			cells: row.cells.map((cell) =>
-			{
-				if (cell.id !== cellId) return cell;
-				return {
-					...cell, articleId: null, children: [
-						{ id: newId(), span: 12, articleId: cell.articleId, direction: cell.direction },
-						{ id: newId(), span: 12, articleId: null, direction: 'top' as ImageDirection },
-					]
-				};
-			}),
-		})));
-		markDirty();
-	}, [markDirty]);
-
-	const addSubCell = useCallback((cellId: string) =>
-	{
-		setGrid((prev) => prev.map((row) => ({
-			...row,
-			cells: row.cells.map((cell) =>
-			{
-				if (cell.id !== cellId || !cell.children) return cell;
-				return { ...cell, children: [...cell.children, { id: newId(), span: 12, articleId: null, direction: 'top' as ImageDirection }] };
-			}),
-		})));
-		markDirty();
-	}, [markDirty]);
-
-	const updateSubCell = useCallback((_cellId: string, subId: string, updates: Partial<GridCell>) =>
-	{
-		setGrid((prev) => prev.map((row) => ({ ...row, cells: deepUpdateCell(row.cells, subId, updates) })));
-		markDirty();
-	}, [markDirty]);
-
-	const clearSubCell = useCallback((_cellId: string, subId: string) =>
-	{
-		setGrid((prev) => prev.map((row) => ({ ...row, cells: deepUpdateCell(row.cells, subId, { articleId: null }) })));
-		markDirty();
-	}, [markDirty]);
-
-	const deleteSubCell = useCallback((cellId: string, subId: string) =>
-	{
-		setGrid((prev) => prev.map((row) => ({
-			...row,
-			cells: row.cells.map((cell) =>
-			{
-				if (cell.id !== cellId || !cell.children) return cell;
-				const newChildren = cell.children.filter((c) => c.id !== subId);
-				if (newChildren.length <= 1)
-				{
-					const remaining = newChildren[0];
-					return { ...cell, articleId: remaining?.articleId ?? null, direction: remaining?.direction ?? 'top', children: undefined };
-				}
-				return { ...cell, children: newChildren };
-			}),
-		})));
-		markDirty();
-	}, [markDirty]);
-
-	const unsplitCell = useCallback((cellId: string) =>
-	{
-		setGrid((prev) => prev.map((row) => ({
-			...row,
-			cells: row.cells.map((cell) =>
-			{
-				if (cell.id !== cellId || !cell.children) return cell;
-				const first = cell.children[0];
-				return { ...cell, articleId: first?.articleId ?? null, direction: first?.direction ?? 'top', children: undefined };
-			}),
-		})));
-		markDirty();
-	}, [markDirty]);
 
 	// ---- Section layout mutations ----
 	const updateSectionPin = useCallback((section: SectionName, index: number, articleId: number | null) =>
@@ -1730,35 +2058,6 @@ export function LayoutEditor()
 			while (pins.length <= index) pins.push(0);
 			pins[index] = articleId ?? 0;
 			return { ...prev, [section]: { ...prev[section], pinnedArticles: pins } };
-		});
-		markDirty();
-	}, [markDirty]);
-
-	const removeSectionPin = useCallback((section: SectionName, index: number) =>
-	{
-		setSectionLayouts((prev) =>
-		{
-			const layout = { ...prev[section], pinnedArticles: prev[section].pinnedArticles.filter((_, i) => i !== index) };
-			return { ...prev, [section]: layout };
-		});
-		markDirty();
-	}, [markDirty]);
-
-	const changeSectionSkeleton = useCallback((section: SectionName, skel: SkeletonId) =>
-	{
-		setSectionLayouts((prev) => ({
-			...prev,
-			[section]: { ...prev[section], skeleton: skel },
-		}));
-		markDirty();
-	}, [markDirty]);
-
-	const addSectionSlot = useCallback((section: SectionName) =>
-	{
-		setSectionLayouts((prev) =>
-		{
-			const layout = { ...prev[section], pinnedArticles: [...prev[section].pinnedArticles, 0] };
-			return { ...prev, [section]: layout };
 		});
 		markDirty();
 	}, [markDirty]);
@@ -1994,13 +2293,6 @@ export function LayoutEditor()
 		markDirty();
 	};
 
-	// ---- Skeleton switch ----
-	const handleSkeletonChange = useCallback((newSkeleton: SkeletonId) =>
-	{
-		setSkeleton(newSkeleton);
-		markDirty();
-	}, [markDirty]);
-
 	// ---- Activate ----
 	const handleActivate = async () =>
 	{
@@ -2123,313 +2415,62 @@ export function LayoutEditor()
 
 	return (
 		<DndContext sensors={sensors} collisionDetection={pointerThenCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-			<div className="le-root">
-				<div className="le-toolbar">
-					<div className="le-toolbar-left">
-						<h1 className="le-toolbar-title">Front Page</h1>
-						<span className="le-toolbar-subtitle">
-							{currentSkeleton ? currentSkeleton.name : 'Custom'} &middot; {articleCount} articles
-						</span>
-					</div>
-					<div className="le-toolbar-right">
-						{error && <span className="le-toolbar-error">{error}</span>}
-						<button className={`le-save-btn ${saved ? 'le-save-btn-saved' : 'le-save-btn-unsaved'}`} onClick={handleActivate} disabled={saving || saved}>
-							{saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
-						</button>
-					</div>
-				</div>
-
-				{/* Edition indicator — derived from articles, read-only */}
-				<div className="le-volume-bar" style={{ color: signColor }}>
-					<span className="le-volume-sign">{currentSkeleton?.icon}</span>
-					<div className="le-volume-group">
-						<span className="le-volume-label">Single homepage layout</span>
-						<span className="le-volume-numeral" style={{ fontSize: '0.95rem' }}>history via “Versions”</span>
-					</div>
-				</div>
-
-				{/* Skeleton picker */}
-				<div className="le-skeleton-bar">
-					<span className="le-presets-label">Skeleton</span>
-					<div className="le-skeleton-list">
-						{TOP_SKELETONS.map((skel) => (
-							<button
-								key={skel.id}
-								className={`le-skeleton-btn ${skeleton === skel.id ? 'le-skeleton-active' : ''}`}
-								onClick={() => handleSkeletonChange(skel.id)}
-								title={skel.description}
-							>
-								<span className="le-skeleton-icon">{skel.icon}</span>
-								<span className="le-skeleton-name">{skel.name}</span>
-								{!skel.pinned && <span className="le-skeleton-beta">beta</span>}
+			<LayoutEditorContext.Provider value={{
+				filteredArticles,
+				markDirty,
+				sectionLayouts,
+				setSectionLayouts,
+				articleMap,
+				grid,
+				setGrid,
+				aries,
+				setAries,
+				search,
+				setSearch,
+				sectionFilter,
+				setSectionFilter
+			}}>
+				<div className="le-root">
+					<div className="le-toolbar">
+						<div className="le-toolbar-left">
+							<h1 className="le-toolbar-title">Front Page</h1>
+							<span className="le-toolbar-subtitle">
+								{currentSkeleton ? currentSkeleton.name : 'Custom'} &middot; {articleCount} articles
+							</span>
+						</div>
+						<div className="le-toolbar-right">
+							{error && <span className="le-toolbar-error">{error}</span>}
+							<button className={`le-save-btn ${saved ? 'le-save-btn-saved' : 'le-save-btn-unsaved'}`} onClick={handleActivate} disabled={saving || saved}>
+								{saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
 							</button>
-						))}
-					</div>
-				</div>
-
-				<div className="le-body">
-					<div className="le-canvas">
-						{skeleton === 'aries' ? (
-							<AriesEditor
-								data={aries}
-								articleMap={articleMap}
-								onClear={(slotId) =>
-								{
-									setAries((prev) =>
-									{
-										if (slotId === 'lead') return { ...prev, lead: null };
-										const [side, idx] = slotId.split('-');
-										if (side === 'left' || side === 'right')
-										{
-											const next = { ...prev, [side]: [...prev[side]] };
-											next[side][Number(idx)] = null;
-											return next;
-										}
-										if (side === 'bottom')
-										{
-											const next = { ...prev, bottom: [...prev.bottom] };
-											next.bottom[Number(idx)] = null;
-											return next;
-										}
-										return prev;
-									});
-									markDirty();
-								}}
-								onToggleLeadImportant={() =>
-								{
-									setAries((prev) => ({ ...prev, leadImportant: !prev.leadImportant }));
-									markDirty();
-								}}
-							/>
-						) : skeleton === 'gemini' ? (
-							/* Gemini: three-column top region (text stack / hero+secondary / feature stack) with bottom card row */
-							(() =>
-							{
-								// Default: show subdeck on hero/left/right; hide on bottom cards (matches the prior render).
-								const subdeckDefault = (slotId: string) => !slotId.startsWith('bottom-');
-								const subdeckFor = (slotId: string): boolean =>
-								{
-									const v = aries.showSubdeck?.[slotId];
-									return v === undefined ? subdeckDefault(slotId) : !!v;
-								};
-								const toggleSubdeck = (slotId: string) =>
-								{
-									setAries((p) =>
-									{
-										const current = subdeckFor(slotId);
-										return { ...p, showSubdeck: { ...(p.showSubdeck ?? {}), [slotId]: !current } };
-									});
-									markDirty();
-								};
-								const SubdeckToggle = ({ slotId }: { slotId: string }) => (
-									<label className="le-subdeck-toggle">
-										<input
-											type="checkbox"
-											checked={subdeckFor(slotId)}
-											onChange={() => toggleSubdeck(slotId)}
-										/>
-										<span>Show subdeck</span>
-									</label>
-								);
-								return (
-									<div className="le-aries-canvas">
-										<div className="le-aries-description">
-											<span className="le-presets-label">Gemini</span>
-											<span className="le-aries-desc-text">
-												Three-column: text-only headline stack at left, big hero photo and headline center with a secondary item below, photo features stacked at right, and a row of small cards across the bottom.
-											</span>
-										</div>
-										<div className="le-gemini-top">
-											<div className="le-gemini-col le-gemini-left">
-												<div className="le-gemini-col-label">Text stack (all optional)</div>
-												{[0, 1, 2, 3, 4, 5].map((i) => (
-													<div key={`left-${i}`} className="le-gemini-slot">
-														<AriesDropSlot
-															slotId={`left-${i}`}
-															label={`Headline ${i + 1}`}
-															article={aries.left[i] !== null ? articleMap.get(aries.left[i]!) || null : null}
-															isLead={false}
-															onClear={() => { setAries((p) => { const next = { ...p, left: [...p.left] }; next.left[i] = null; return next; }); markDirty(); }}
-															numberingSkeleton="gemini"
-														/>
-														<SubdeckToggle slotId={`left-${i}`} />
-													</div>
-												))}
-											</div>
-											<div className="le-gemini-col le-gemini-center">
-												<div className="le-gemini-col-label">Center</div>
-												<AriesDropSlot
-													slotId="lead"
-													label="Hero (photo + lead)"
-													article={aries.lead !== null ? articleMap.get(aries.lead) || null : null}
-													isLead
-													onClear={() => { setAries((p) => ({ ...p, lead: null })); markDirty(); }}
-													numberingSkeleton="gemini"
-												/>
-												<label className="le-aries-important-toggle">
-													<input
-														type="checkbox"
-														checked={!!aries.leadImportant}
-														onChange={() => { setAries((p) => ({ ...p, leadImportant: !p.leadImportant })); markDirty(); }}
-													/>
-													<span>Important</span>
-												</label>
-												<SubdeckToggle slotId="lead" />
-												<div className="le-lead-position-toggle">
-													<span>Photo:</span>
-													<button
-														type="button"
-														className={(aries.leadPhotoPosition ?? 'above') === 'above' ? 'active' : ''}
-														onClick={() => { setAries((p) => ({ ...p, leadPhotoPosition: 'above' })); markDirty(); }}
-													>
-														Above text
-													</button>
-													<button
-														type="button"
-														className={aries.leadPhotoPosition === 'below' ? 'active' : ''}
-														onClick={() => { setAries((p) => ({ ...p, leadPhotoPosition: 'below' })); markDirty(); }}
-													>
-														Below text
-													</button>
-												</div>
-											</div>
-											<div className="le-gemini-col le-gemini-right">
-												<div className="le-gemini-col-label">Feature stack (all optional)</div>
-												{[0, 1, 2, 3, 4].map((i) => (
-													<div key={`right-${i}`} className="le-gemini-slot">
-														<AriesDropSlot
-															slotId={`right-${i}`}
-															label={`Feature ${i + 1}`}
-															article={aries.right[i] !== null ? articleMap.get(aries.right[i]!) || null : null}
-															isLead={false}
-															onClear={() => { setAries((p) => { const next = { ...p, right: [...p.right] }; next.right[i] = null; return next; }); markDirty(); }}
-															numberingSkeleton="gemini"
-														/>
-														<SubdeckToggle slotId={`right-${i}`} />
-													</div>
-												))}
-											</div>
-										</div>
-										<div className="le-gemini-bottom-label">Bottom row (under left + center)</div>
-										<div className="le-gemini-bottom-grid">
-											{[0, 1].map((i) => (
-												<div key={`bottom-${i}`} className="le-gemini-slot">
-													<AriesDropSlot
-														slotId={`bottom-${i}`}
-														label={`Card ${i + 1}`}
-														article={aries.bottom[i] !== null ? articleMap.get(aries.bottom[i]!) || null : null}
-														isLead={false}
-														onClear={() => { setAries((p) => { const next = { ...p, bottom: [...p.bottom] }; next.bottom[i] = null; return next; }); markDirty(); }}
-														numberingSkeleton="gemini"
-													/>
-													<SubdeckToggle slotId={`bottom-${i}`} />
-												</div>
-											))}
-										</div>
-									</div>
-								);
-							})()
-						) : skeleton === 'taurus' ? (
-							/* Top-area Taurus: reuses aries state — lead=feature, left=supporting, right=list */
-							<div className="le-aries-canvas">
-								<div className="le-aries-description">
-									<span className="le-presets-label">Taurus</span>
-									<span className="le-aries-desc-text">Feature story with image + supporting text + list rail.</span>
-								</div>
-								<div className="le-tau-grid">
-									<div className="le-tau-feature">
-										<AriesDropSlot slotId="lead" label="Feature" article={aries.lead !== null ? articleMap.get(aries.lead) || null : null} isLead onClear={() => { setAries((p) => ({ ...p, lead: null })); markDirty(); }} numberingSkeleton="taurus" />
-									</div>
-									<div className="le-tau-supporting">
-										{[0, 1, 2].map((i) => (
-											<AriesDropSlot key={`left-${i}`} slotId={`left-${i}`} label={`Support ${i + 1}`} article={aries.left[i] !== null ? articleMap.get(aries.left[i]!) || null : null} isLead={false} onClear={() => { setAries((p) => { const next = { ...p, left: [...p.left] }; next.left[i] = null; return next; }); markDirty(); }} numberingSkeleton="taurus" />
-										))}
-									</div>
-									<div className="le-tau-list">
-										{[0, 1, 2].map((i) => (
-											<AriesDropSlot key={`right-${i}`} slotId={`right-${i}`} label={`List ${i + 1}`} article={aries.right[i] !== null ? articleMap.get(aries.right[i]!) || null : null} isLead={false} onClear={() => { setAries((p) => { const next = { ...p, right: [...p.right] }; next.right[i] = null; return next; }); markDirty(); }} numberingSkeleton="taurus" />
-										))}
-									</div>
-								</div>
-							</div>
-						) : (
-							<>
-								<RowPresets onAdd={addRow} />
-
-								{grid.length === 0 && <div className="le-empty-canvas"><p>No rows yet. Click a preset above to add your first row.</p></div>}
-
-								<SortableContext items={rowSortIds} strategy={verticalListSortingStrategy}>
-									{grid.map((row, i) => (
-										<SortableGridRow
-											key={row.id} row={row} rowIndex={i} articleMap={articleMap}
-											onDeleteRow={() => deleteRow(row.id)}
-											onAddCell={() => addCell(row.id)}
-											onUpdateCell={(cellId, updates) => updateCell(cellId, updates)}
-											onDeleteCell={(cellId) => deleteCell(row.id, cellId)}
-											onClearCell={(cellId) => clearCell(cellId)}
-											onSplitCell={(cellId) => splitCell(cellId)}
-											onAddSubCell={(cellId) => addSubCell(cellId)}
-											onUpdateSubCell={(cellId, subId, updates) => updateSubCell(cellId, subId, updates)}
-											onClearSubCell={(cellId, subId) => clearSubCell(cellId, subId)}
-											onDeleteSubCell={(cellId, subId) => deleteSubCell(cellId, subId)}
-											onUnsplitCell={(cellId) => unsplitCell(cellId)}
-											onResizeCell={(cellId, delta) => resizeCell(cellId, delta)}
-											slotNumberLookup={customGridSlotLookup}
-										/>
-									))}
-								</SortableContext>
-
-								{grid.length > 0 && <RowPresets onAdd={addRow} />}
-							</>
-						)}
-
-						{/* Section layouts */}
-						<div className="le-section-editors">
-							<div className="le-section-editors-header">
-								<h2 className="le-section-editors-title">Section Layouts</h2>
-								<span className="le-section-editors-subtitle">Pin articles to control what appears in each section. Unpinned slots auto-fill.</span>
-							</div>
-							{SECTION_NAMES.map((sec) => (
-								<SectionEditor
-									key={sec}
-									sectionName={sec}
-									layout={sectionLayouts[sec]}
-									articleMap={articleMap}
-									onRemovePin={(index) => removeSectionPin(sec, index)}
-									onAddSlot={() => addSectionSlot(sec)}
-									onChangeSkeleton={(skel) => changeSectionSkeleton(sec, skel)}
-								/>
-							))}
 						</div>
 					</div>
 
-					<PoolDropZone>
-						<div className="le-pool-header">
-							<h2 className="le-pool-title">Articles</h2>
-							<span className="le-pool-count">{filteredArticles.length}</span>
+					{/* Edition indicator — derived from articles, read-only */}
+					<div className="le-volume-bar" style={{ color: signColor }}>
+						<span className="le-volume-sign">{currentSkeleton?.icon}</span>
+						<div className="le-volume-group">
+							<span className="le-volume-label">Single homepage layout</span>
+							<span className="le-volume-numeral" style={{ fontSize: '0.95rem' }}>history via “Versions”</span>
 						</div>
-						<input type="text" className="le-pool-search" placeholder="Search articles..." value={search} onChange={(e) => setSearch(e.target.value)} />
-						<div className="le-pool-filters">
-							{(['all', 'news', 'features', 'opinion', 'sports'] as const).map((s) => (
-								<button key={s} className={`le-filter-pill ${sectionFilter === s ? 'le-filter-active' : ''}`}
-									onClick={() => setSectionFilter(s)}
-									style={sectionFilter === s && s !== 'all' ? { background: SECTION_COLORS[s], borderColor: SECTION_COLORS[s] } : undefined}
-								>{s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}</button>
-							))}
-						</div>
-						<div className="le-pool-list">
-							{filteredArticles.map((article) => (
-								<DraggablePoolCard key={article.id} article={article} isUsed={usedIds.has(article.id)} />
-							))}
-							{filteredArticles.length === 0 && <div className="le-pool-empty">No articles found</div>}
-						</div>
-					</PoolDropZone>
-				</div>
-			</div>
+					</div>
 
-			<DragOverlay dropAnimation={null}>
-				{activeArticle ? <DragOverlayCard article={activeArticle} /> : null}
-			</DragOverlay>
+					<SkeletonPicker skeleton={skeleton} setSkeleton={setSkeleton} />
+
+					<div className="le-body">
+						<div className="le-canvas">
+							<SkeletonSwitcher skeleton={skeleton} />
+							<SectionLayouts />
+						</div>
+
+						<PoolDropZone />
+					</div>
+				</div>
+
+				<DragOverlay dropAnimation={null}>
+					{activeArticle ? <DragOverlayCard article={activeArticle} /> : null}
+				</DragOverlay>
+			</LayoutEditorContext.Provider>
 		</DndContext>
 	);
 }
